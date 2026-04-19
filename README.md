@@ -2,24 +2,17 @@
 
 This repository contains a Model Context Protocol (MCP) server designed to integrate Tridion Sites with AI assistants like GitHub Copilot and Gemini CLI. By running this server, you transform your AI assistant into a BluePrint-aware collaborator capable of navigating complex content hierarchies, executing system administration tasks, and orchestrating batch operations via the Tridion Sites Core Service REST API.
 
-## Optimized Architecture: Meta-Tools
+## Optimized Architecture: Just-In-Time (JIT) Hydration
 
-Unlike traditional MCP servers that expose every tool in the system prompt (which can consume thousands of tokens), this server uses a **discovery-based architecture** consisting of two specialized "Meta-Tools":
+This server uses a **discovery-based architecture** to minimize token consumption and prevent agent hallucinations. Instead of exposing all 80+ tools in the initial system prompt, the server uses a **JIT Hydration** model:
 
-1.  **`getToolDetails`**: Allows the AI assistant to browse a lightweight summary of all 83 tools and "fetch" the full documentation and JSON schema for only the tools it needs for the current task.
-2.  **`callTool`**: A single, validated execution point for all CMS operations.
+1.  **`_initializeTools`**: The primary meta-tool exposed at startup. The AI assistant uses this to browse tool summaries and "fetch" full documentation (schemas, heuristics, and examples) for specific tools.
+2.  **`_syncTools`**: A synchronization barrier used immediately after initialization. It forces a network round-trip to ensure the client has processed the tool list change notification before the AI attempts to use the new tools (refer to [Gemini CLI Issue #25650](https://github.com/google-gemini/gemini-cli/issues/25650) for technical context).
+3.  **Client Hot-Reloading**: The server dispatches a `notifications/tools/list_changed` signal during initialization. The `_syncTools` tool ensures the client finishes this background refresh before the next substantive step.
+4.  **Security Interlock**: For orchestrated scripts (`toolOrchestrator`), the server enforces a strict rule: a tool cannot be executed within a script unless it has been explicitly initialized and documented in the same session.
 
-This approach is an independent implementation of the **MCP Compression** pattern (referenced by Atlassian in [this article](https://www.atlassian.com/blog/developer/mcp-compression-preventing-tool-bloat-in-ai-agents)), which ensures the system prompt stays small and efficient, leaving more room in the context window for actual content and reasoning.
+This approach is an independent implementation of the **MCP Compression** pattern, which ensures the system prompt stays efficient while providing the agent with the highest-fidelity documentation exactly when needed.
 
-### Mandatory Tool Access Protocol (Discovery-First Handshake)
-
-To ensure operational safety and context accuracy, this server enforces a **Discovery-First Handshake** protocol. AI agents cannot execute tools based on guesswork or historical knowledge.
-
-1.  **Handshake Requirement**: Before any tool can be executed via `callTool`, the agent **MUST** first call `getToolDetails` for that specific tool.
-2.  **Access GUID**: The `getToolDetails` response includes a unique, deterministic **Access GUID** for the requested tool.
-3.  **Validated Execution**: The `callTool` function requires this `accessGuid` as a mandatory parameter. If the GUID is missing or incorrect, the execution is rejected.
-
-This protocol ensures that the AI assistant always reviews the JSON schema, business rules, and "Heuristics" provided in the tool's extended description before attempting a mutation, significantly reducing the risk of hallucinations or invalid CMS operations.
 
 
 ## Capabilities
@@ -122,10 +115,6 @@ To get the MCP server running on your machine, follow these steps:
     **Configuration Toggles:**
     You can toggle features via CLI flags, environment variables, or a local `.env` file. When using `npm start`, remember to use the `--` separator to pass flags through to the underlying process:
 
-    *   **Tool Parameter Inclusion (Default: Enabled)**
-        By default, the `getToolDetails` summary includes a comma-separated list of top-level arguments for every tool. This helps the AI assistant identify the correct tool more accurately before fetching full details.
-        *   Disable: `npm start -- --no-params` or `MCP_INCLUDE_PARAMETERS=false`
-        *   Enable: `npm start -- --with-params` or `MCP_INCLUDE_PARAMETERS=true`
 
     *   **Transport Mode Override**
         *   Force HTTP: `npm start -- --http` or `MCP_TRANSPORT=http`
@@ -137,8 +126,8 @@ To get the MCP server running on your machine, follow these steps:
 
 ```
 src/
-├── index.ts              # Server entry point. Dynamically loads all tools from tools/,
-│                         # registers the getToolDetails and callTool handlers.
+├── index.ts              # Server entry point. Registers the _initializeTools handler.
+│                         # Dynamically registers other tools (including Orchestrator) upon request.
 ├── tools/                # One file per MCP tool. Each file exports a single object with a name,
 │                         # description, Zod input schema, and an execute function.
 ├── schemas/              # Reusable Zod schemas shared across multiple tools (e.g. search query
@@ -169,8 +158,7 @@ VS Code uses an `mcp.json` file (either globally in your user profile or locally
         "CORE_API_URL": "...",
         "AUTH_CLIENT_ID": "...",
         "AUTH_CLIENT_SECRET": "...",
-        "AUTH_TOKEN_URL": "...",
-        "MCP_INCLUDE_PARAMETERS": "true"
+        "AUTH_TOKEN_URL": "..."
       }
     }
   }
@@ -207,8 +195,7 @@ Note: you may need to use absolute paths for the command arguments.
       ],
       "env": {
         "CORE_API_URL": "...",
-        "AUTH_CLIENT_ID": "...",
-        "MCP_INCLUDE_PARAMETERS": "true"
+        "AUTH_CLIENT_ID": "..."
       }
     }
   }
@@ -244,8 +231,7 @@ Antigravity uses an `mcp_config.json` file.
       ],
       "env": {
         "CORE_API_URL": "...",
-        "AUTH_CLIENT_ID": "...",
-        "MCP_INCLUDE_PARAMETERS": "true"
+        "AUTH_CLIENT_ID": "..."
       }
     }
   }
@@ -289,7 +275,6 @@ To point your MCP server at the mock instance, use the following environment var
 "env": {
     "CORE_API_URL": "http://localhost:8081/api/v3.0",
     "AUTH_TOKEN_URL": "http://localhost:8081/access-management/connect/token",
-    "MCP_INCLUDE_PARAMETERS": "true",
     "AUTH_CLIENT_ID": "any-id",
     "AUTH_CLIENT_SECRET": "any-secret"
 }

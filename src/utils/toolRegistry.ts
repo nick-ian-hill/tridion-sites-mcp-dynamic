@@ -101,7 +101,7 @@ export function getToolRegistry(): Map<string, Tool> {
 /**
  * Generates a bulleted list of all available tools, optionally including their parameter lists.
  */
-export function getToolsSummary(includeParams: boolean = true): string {
+export function getToolsSummary(): string {
     const categories: Record<string, string[]> = {
         "Search & Discovery": ['search', 'getItemsInContainer', 'getItem', 'bulkReadItems', 'getLockedItems'],
         "Item Management (CRUD)": ['createItem', 'createComponent', 'createPage', 'updateContent', 'updateMetadata', 'updatePage', 'updateItemProperties', 'deleteItem', 'copyItem', 'moveItem'],
@@ -125,13 +125,7 @@ export function getToolsSummary(includeParams: boolean = true): string {
         for (const name of toolNames) {
             const tool = toolRegistry.get(name);
             if (tool) {
-                let argsStr = 'no arguments';
-                if (includeParams) {
-                    const topLevelArgs = Object.keys(tool.input);
-                    if (topLevelArgs.length > 0) argsStr = topLevelArgs.join(', ');
-                }
-                const argsDisplay = includeParams ? ` (args: ${argsStr})` : '';
-                summary.push(`- **${name}**: ${tool.summary}${argsDisplay}`);
+                summary.push(`- **${name}**: ${tool.summary}`);
                 categorizedSet.add(name);
                 addedInCategory = true;
             }
@@ -145,13 +139,7 @@ export function getToolsSummary(includeParams: boolean = true): string {
     const uncategorized: string[] = [];
     for (const [name, tool] of toolRegistry.entries()) {
         if (!categorizedSet.has(name)) {
-            let argsStr = 'no arguments';
-            if (includeParams) {
-                const topLevelArgs = Object.keys(tool.input);
-                if (topLevelArgs.length > 0) argsStr = topLevelArgs.join(', ');
-            }
-            const argsDisplay = includeParams ? ` (args: ${argsStr})` : '';
-            uncategorized.push(`- **${name}**: ${tool.summary}${argsDisplay}`);
+            uncategorized.push(`- **${name}**: ${tool.summary}`);
         }
     }
 

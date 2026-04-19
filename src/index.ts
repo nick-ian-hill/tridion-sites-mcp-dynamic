@@ -7,9 +7,6 @@ const defaultTransport = process.stdin.isTTY ? 'http' : 'stdio';
 const transportType = (process.env.MCP_TRANSPORT || (forceHttp ? 'http' : (forceStdio ? 'stdio' : defaultTransport))).toLowerCase();
 const isStdio = transportType === 'stdio';
 
-// Optional: toggle parameter inclusion via CLI flags
-if (args.includes('--no-params')) process.env.MCP_INCLUDE_PARAMETERS = 'false';
-if (args.includes('--with-params')) process.env.MCP_INCLUDE_PARAMETERS = 'true';
 
 /**
  * In Stdio mode, stdout MUST be reserved for MCP JSON-RPC protocol messages.
@@ -44,21 +41,40 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import { initializeToolRegistry, Tool } from './utils/toolRegistry.js';
-import { getToolDetails, callTool } from './mcp/metaTools.js';
+import { initializeSessionTools } from './mcp/metaTools.js';
+import { toolOrchestrator } from './tools/toolOrchestrator.js';
 
 /**
  * Creates and configures an McpServer instance with registered meta-tools.
+ * The server is initialized with listChanged: true capabilities to support JIT Hydration.
  */
 function createMcpServer(): McpServer {
     const server = new McpServer({
         name: "tridion-sites-mcp-server",
         version: "0.1.0"
+    }, {
+        capabilities: {
+            tools: {
+                listChanged: true
+            }
+        }
     });
 
-    const mcpTools = [getToolDetails as Tool, callTool as Tool];
+    // 1. Initialize session-specific meta-tools and state
+    const { _initializeTools, _syncTools, unlockedTools } = initializeSessionTools(server);
+
+    // 2. Initial toolset: Only _initializeTools and _syncTools are registered by default.
+    // All other tools (including toolOrchestrator) must be hydrated via _initializeTools.
+    const mcpTools = [_initializeTools as Tool, _syncTools as Tool];
 
     for (const tool of mcpTools) {
-        const fullDescription = `${tool.summary}\n\n${tool.description}`;
+        let fullDescription = `${tool.summary}\n\n${tool.description}`;
+        
+        // Append examples if they exist (standard for the JIT registration pattern)
+        if (tool.examples && tool.examples.length > 0) {
+            fullDescription += `\n\n### Examples\n${JSON.stringify(tool.examples, null, 2)}`;
+        }
+
         server.registerTool(
             tool.name,
             {
@@ -66,7 +82,9 @@ function createMcpServer(): McpServer {
                 inputSchema: tool.input,
             },
             (args: any, context: any) => {
-                return tool.execute(args, context);
+                // We pass the session-isolated 'unlockedTools' Set into the execution context
+                // so the toolOrchestrator can enforce the "Initialization Interlock".
+                return tool.execute(args, { ...context, unlockedTools });
             }
         );
     }
@@ -146,13 +164,11 @@ async function startServer() {
                         await transport.handleRequest(req, res, parsed);
                     } else if (sessionId && !sessions.has(sessionId)) {
                         // Stale session ID with a non-initialize request (e.g. after server restart).
-                        // Handle statelessly so clients don't need to reinitialize manually.
-                        const transport = new StreamableHTTPServerTransport({
-                            sessionIdGenerator: undefined, // stateless: no session ID assigned or stored
-                        });
-                        const server = createMcpServer();
-                        await server.connect(transport);
-                        await transport.handleRequest(req, res, parsed);
+                        // Under the JIT Hydration model, we DO NOT support stateless fallbacks.
+                        // Tools must be re-initialized by the client after a connection reset.
+                        // Returning 404 signals the client to re-initialize the session properly.
+                        res.writeHead(404, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'Session not found. Please re-initialize.' }));
                     } else {
                         res.writeHead(400, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ error: 'Session not found or invalid request' }));

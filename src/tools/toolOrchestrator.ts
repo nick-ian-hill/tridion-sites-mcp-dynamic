@@ -109,6 +109,37 @@ const scriptUtils = {
     }
 };
 
+/**
+ * Scans continuous script strings for any calls to `context.tools.<ToolName>`
+ * or `context.tools['<ToolName>']` and returns a set of unique tool names used.
+ */
+function scanForRequiredTools(scripts: (string | undefined)[]): Set<string> {
+    const toolsUsed = new Set<string>();
+    // Matches context.tools.toolName and context.tools['toolName'] or context.tools["toolName"]
+    const dotPropRegex = /context\.tools\.([a-zA-Z0-9_]+)/g;
+    const bracketPropRegex = /context\.tools\[['"]([^'"]+)['"]\]/g;
+
+    for (const script of scripts) {
+        if (!script) continue;
+
+        let match;
+        // Dot notation matches
+        while ((match = dotPropRegex.exec(script)) !== null) {
+            if (match[1]) toolsUsed.add(match[1]);
+        }
+        // Reset regex index
+        dotPropRegex.lastIndex = 0;
+
+        // Bracket notation matches
+        while ((match = bracketPropRegex.exec(script)) !== null) {
+            if (match[1]) toolsUsed.add(match[1]);
+        }
+        // Reset regex index
+        bracketPropRegex.lastIndex = 0;
+    }
+    return toolsUsed;
+}
+
 // --- Interfaces ---
 
 // Define the shape of the context object for the pre-processing script.
@@ -574,6 +605,47 @@ export const toolOrchestrator = {
             debug
         } = input;
 
+        // --- PRE-FLIGHT VALIDATION: Tool Initialization Check ---
+        const requiredTools = scanForRequiredTools([preProcessingScript, mapScript, postProcessingScript]);
+        const unlockedTools = mcpContext.unlockedTools as Set<string> | undefined;
+        const missingInitializations: string[] = [];
+        const forbiddenTools: string[] = [];
+
+        for (const toolName of requiredTools) {
+            if (DISALLOWED_TOOLS.includes(toolName)) {
+                forbiddenTools.push(toolName);
+                continue;
+            }
+            if (unlockedTools && !unlockedTools.has(toolName)) {
+                missingInitializations.push(toolName);
+            }
+        }
+
+        if (forbiddenTools.length > 0) {
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        type: "ValidationError",
+                        Message: `Operation Aborted: The script uses forbidden tools ([${forbiddenTools.join(', ')}]).`
+                    })
+                }]
+            };
+        }
+
+        if (missingInitializations.length > 0) {
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        type: "ValidationError",
+                        Message: `Operation Aborted: The script uses tools that have not been initialized ([${missingInitializations.join(', ')}]). You must call '_initializeTools' first.`
+                    })
+                }]
+            };
+        }
+        // ---------------------------------------------------------
+
         /** Helper to extract a clear error message. */
         const extractErrorMessage = (e: any): string => {
             try {
@@ -608,7 +680,16 @@ export const toolOrchestrator = {
 
         // --- Create Tool Wrappers ---
         const toolWrappers: { [toolName: string]: (args: any) => Promise<any> } = {};
+
         for (const toolName in mcpContext.tools) {
+            // Check if the tool is unlocked for this session (Initialization Interlock)
+            if (unlockedTools && !unlockedTools.has(toolName)) {
+                toolWrappers[toolName] = async (_args: any) => {
+                    throw new Error(`SecurityError: Tool [${toolName}] is not initialized. You must call '_initializeTools' natively before using it in a script.`);
+                };
+                continue;
+            }
+
             if (DISALLOWED_TOOLS.includes(toolName)) {
                 toolWrappers[toolName] = async (_args: any) => {
                     throw new Error(`ToolError: The tool "${toolName}" is not permitted to be called from within the toolOrchestrator for security reasons.`);

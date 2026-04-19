@@ -10,7 +10,7 @@ import { getCachedDefaultModel } from "../utils/defaultModelCache.js";
 
 export const createRegionSchema = {
     name: "createRegionSchema",
-    summary: "Creates a Schema for Page Regions. Use this to define the layout and slot constraints of a Page.",
+    summary: "Creates a Schema for Page Regions to define layout structures, region constraints, and optional metadata. Regions serve as containers for Component Presentations and nested regions, allowing you to enforce specific slot constraints and Page organization.",
     description: `Creates a new Content Manager System (CMS) item of type 'Schema' with a purpose of 'Region'.
 
 BluePrint Inheritance Note:
@@ -57,7 +57,7 @@ Simple Pattern (Shared): Create one generic Region Schema and have all NestedReg
         } = args;
 
         const authenticatedAxios = createAuthenticatedAxios(userSessionId);
-        
+
         try {
             const processedMetadataFields = metadataFields ? await processAndOrderFieldDefinitions(metadataFields, locationId, authenticatedAxios) : undefined;
 
@@ -85,7 +85,7 @@ Simple Pattern (Shared): Create one generic Region Schema and have all NestedReg
             if (regionDefinition) payload.RegionDefinition = regionDefinition;
             if (typeof isIndexable === 'boolean') payload.IsIndexable = isIndexable;
             if (typeof isPublishable === 'boolean') payload.IsPublishable = isPublishable;
-            
+
             if (!payload.LocationInfo?.OrganizationalItem?.IdRef) {
                 payload.LocationInfo = { ...payload.LocationInfo, OrganizationalItem: toLink(locationId) };
             }

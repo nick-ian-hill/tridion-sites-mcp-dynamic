@@ -1,19 +1,58 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { getToolRegistry, getToolsSummary, Tool } from "../utils/toolRegistry.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 /**
- * The getToolDetails meta-tool allows the LLM to discover the full documentation
- * and Zod-derived JSON schemas for specific tools.
+ * Initializes session-specific meta-tools and state for a given McpServer instance.
+ * Using a factory ensures that 'unlockedTools' and dynamic registrations are 
+ * isolated per session/connection.
  */
-export const getToolDetails = {
-    name: "getToolDetails",
-    summary: "Meta-tool to look up API documentation and business rules for the CMS.",
-    examples: [],
-    get description() {
-        const includeParams = process.env.MCP_INCLUDE_PARAMETERS !== 'false';
-        const summaryString = getToolsSummary(includeParams);
-        return `${this.summary}\n\nRetrieves detailed documentation, input schemas, and usage examples. The inputSchema is the source of truth for native features.
+export function initializeSessionTools(server: McpServer) {
+    // State isolated to this session's closure
+    const unlockedTools = new Set<string>(['_initializeTools', '_syncTools']);
+    const registeredOnServer = new Set<string>(['_initializeTools', '_syncTools']);
+
+    /**
+     * The _syncTools tool acts as a synchronization barrier (a "yield").
+     * Its primary purpose is to force a network round-trip so that the client 
+     * (like Gemini CLI) has a wall-clock 'tick' to process the notifications 
+     * queue and hydrate the registry before the next substantive tool call.
+     */
+    const _syncTools = {
+        name: "_syncTools",
+        summary: "Yields execution to the client for state synchronization.",
+        examples: [],
+        description: "This is a synchronization tool. When called, it returns a success message. Its primary purpose is to create a network round-trip ('tick') that allows the client (e.g., Gemini CLI) to process background notifications, such as tool list updates from JIT hydration, before the next real step is taken.",
+        input: {},
+        execute: async () => {
+            return {
+                content: [{
+                    type: "text",
+                    text: "Sync tick completed. You may now proceed with using the newly hydrated tools."
+                }]
+            };
+        }
+    };
+
+    /**
+     * The _initializeTools meta-tool replaces getToolDetails.
+     * It allows the AI assistant to browse lightweight summaries and "fetch"
+     * full documentation, while simultaneously registering the tools as native MCP tools.
+     */
+    const _initializeTools = {
+        name: "_initializeTools",
+        summary: "Initializes CMS tools for active use.",
+        examples: [],
+        get description() {
+            const summaryString = getToolsSummary();
+            return `
+## USAGE PROTOCOL
+1.  Select tools from the 'AVAILABLE TOOLS' menu below.
+2.  Call this tool to hydrate them into your native registry.
+3.  **Mandatory Synchronization**: Immediately after calling this tool, you **MUST** call the \`_syncTools\` tool as your very next action. This ensures the client (e.g. Gemini CLI) has time to process the tool refresh before you attempt to use those tools natively or in a subagent.
+
+Note: Tools must be initialized here before they can be used natively or within the \`toolOrchestrator\`.
 
 ## CRITICAL CMS ARCHITECTURE & OPERATIONAL HEURISTICS
 
@@ -49,136 +88,98 @@ You are an expert collaborator for the Tridion Sites Content Management System. 
 * **Short-Circuiting:** * If a request is vague (e.g., "update the article"), do **NOT** guess; ask for specific IDs.
     * If a request is out-of-domain (e.g., "Mango the orange..."), do **NOT** call CMS tools. Respond politely and pivot back to the CMS.
 * **Native Over Custom:** Always prioritize solving requirements through native parameters and schema-level properties (e.g., field flags, mandatory settings) as the primary solution before proposing custom extensions, C# scripts, or event handlers.
-* **Scripting API Integrity:** When using \`toolOrchestrator\`, the \`context.tools\` object exposes ONLY the tools listed in this documentation. You **MUST** call \`getToolDetails\` for any tool you intend to use in a script to verify its exact name and parameter schema.
-
-### 6. Execution & Verification Protocol
-* **Mandatory Discovery & Handshake:** You are strictly forbidden from guessing tool parameters or capabilities. Before executing any tool via \`callTool\`, formulating a multi-step plan, or writing a \`toolOrchestrator\` script, you **MUST** first invoke \`getToolDetails\` to review the JSON schema and retrieve the mandatory **Access GUID**. You cannot execute a tool without providing its specific GUID, which is provided exclusively in the \`getToolDetails\` response.
-* **Trust but Verify (Read-After-Write):** A successful tool execution (HTTP 200) does not guarantee the CMS state changed as intended. After calling any mutation tool (e.g., \`createComponent\`, \`updateContent\`, \`updateMetadata\`, \`localizeItem\`, \`moveItem\`), you **MUST NOT** report the task as complete to the user. You must first independently verify the state change by fetching the updated item using \`getItem\` or verifying its location using \`getItemsInContainer\`.
-* **Autonomous Self-Correction:** If your verification step reveals the state did not change as expected, analyze the delta, formulate a hypothesis (e.g., "Item is locked in a parent publication"), and attempt an automated correction **exactly once** (e.g., calling \`localizeItem\` before retrying an update).
-* **Graceful Escalation:** Do not get stuck in infinite loops. If your self-correction attempt fails, if a task appears structurally impossible, or if you require architectural clarification, **STOP**. Clearly explain the blocker, the exact errors received, your hypothesis, and ask the user for guidance.
+* **Scripting API Integrity:** When using \`toolOrchestrator\`, the \`context.tools\` object exposes ONLY the tools listed in this documentation. You **MUST** call \`_initializeTools\` natively for any tool you intend to use in a script to verify its exact name and parameter schema.
 
 The list of "AVAILABLE TOOLS" below contains concise "SEO hooks" (summaries) for each tool. Use these hooks to identify which tool possesses the knowledge needed to answer a user's question.
 
 AVAILABLE TOOLS:
 ${summaryString}
 
-If a tool's description mentions using another tool, you must access that referenced tool via \`callTool\`.`;
-    },
-    input: {
-        toolNames: z.array(z.string()).describe("An array of exact tool names to retrieve documentation for. You can request multiple tools at once.")
-    },
-    execute: async ({ toolNames }: { toolNames: string[] }) => {
-        const registry = getToolRegistry();
-        const results = toolNames.map(name => {
-            const tool = registry.get(name);
-            if (!tool) {
-                return {
-                    toolName: name,
-                    error: `Tool '${name}' not found in the registry.`
-                };
-            }
+If a tool's description mentions using another tool, you must initialize that referenced tool before use.`;
+        },
+        input: {
+            toolNames: z.array(z.string()).describe("An array of exact tool names to retrieve documentation for and register for use.")
+        },
+        execute: async ({ toolNames }: { toolNames: string[] }) => {
+            const registry = getToolRegistry();
+            let toolsRegisteredCount = 0;
+            const successNames: string[] = [];
+            const failureNames: string[] = [];
 
-            // Convert Zod schema (tool.input) to JSON schema
-            // tool.input is typically a record of zod objects, so we wrap it in z.object()
-            const jsonSchema = zodToJsonSchema(z.object(tool.input), {
-                name: tool.name,
-                target: "jsonSchema7"
+            toolNames.forEach(name => {
+                const tool = registry.get(name);
+                if (!tool) {
+                    failureNames.push(name);
+                    return;
+                }
+
+                // --- Dynamic Tool Registration (JIT) ---
+                if (!registeredOnServer.has(tool.name)) {
+                    try {
+                        console.error(`[Discovery] JIT Hydration: Registering tool '${tool.name}'`);
+
+                        // Append examples to description as requested
+                        let fullDescription = `${tool.summary}\n\n${tool.description}`;
+                        if (tool.examples && tool.examples.length > 0) {
+                            fullDescription += `\n\n### Examples\n${JSON.stringify(tool.examples, null, 2)}`;
+                        }
+
+                        server.registerTool(
+                            tool.name,
+                            {
+                                description: fullDescription,
+                                inputSchema: tool.input,
+                            },
+                            (args: any, context: any) => {
+                                return tool.execute(args, { ...context, unlockedTools });
+                            }
+                        );
+
+                        registeredOnServer.add(tool.name);
+                        toolsRegisteredCount++;
+                    } catch (error) {
+                        console.error(`[Discovery] Failed to register tool ${tool.name}:`, error);
+                        failureNames.push(name);
+                        return;
+                    }
+                }
+
+                // Track as unlocked for orchestrator even if already registered on server
+                unlockedTools.add(tool.name);
+                successNames.push(tool.name);
             });
 
-            const result: any = {
-                toolName: tool.name,
-                accessGuid: tool.guid, // Return the deterministic GUID
-                summary: tool.summary,
-                description: tool.description,
-                inputSchema: jsonSchema,
-                examples: tool.examples
-            };
-
-            return result;
-        });
-
-        return {
-            content: [{
-                type: "text",
-                text: JSON.stringify(results, null, 2)
-            }]
-        };
-    }
-};
-
-/**
- * The callTool meta-tool is the single execution point for all tools in the registry.
- * It performs runtime validation against the tool's Zod schema before execution.
- */
-export const callTool = {
-    name: "callTool",
-    summary: "Meta-tool to execute CMS tools properly with schema validation.",
-    description: "Executes a specific tool with the provided parameters. Validates the input against the tool's schema before execution.",
-    examples: [],
-    input: {
-        toolName: z.string().describe("The name of the tool to execute."),
-        accessGuid: z.string().describe("The unique Access GUID for this tool (found in the getToolDetails response)."),
-        parameters: z.record(z.any()).describe("The parameters to pass to the tool, as a JSON object.")
-    },
-    execute: async ({ toolName, accessGuid, parameters }: { toolName: string, accessGuid: string, parameters: Record<string, any> }, context: any) => {
-        const registry = getToolRegistry();
-        const tool = registry.get(toolName);
-
-        if (!tool) {
-            return {
-                content: [{
-                    type: "text",
-                    text: `Error: Tool '${toolName}' not found.`
-                }]
-            };
-        }
-
-        // 0. Verify Access GUID
-        if (accessGuid !== tool.guid) {
-            return {
-                content: [{
-                    type: "text",
-                    text: `Error: Access Denied. The provided Access GUID is invalid for tool '${toolName}'. You must call getToolDetails to retrieve the correct GUID.`
-                }]
-            };
-        }
-
-        try {
-            // 1. Validate parameters against tool's Zod schema
-            const validatedParams = z.object(tool.input).parse(parameters);
-
-            // 2. Prepare context (preserving special injection for toolOrchestrator)
-            let executionContext = context;
-            if (toolName === 'toolOrchestrator') {
-                // Convert Map to Record for compatibility with existing toolOrchestrator logic
-                const toolsAsRecord: Record<string, Tool> = {};
-                registry.forEach((t, name) => {
-                    toolsAsRecord[name] = t;
-                });
-
-                executionContext = {
-                    ...context,
-                    tools: toolsAsRecord
-                };
+            // Notify client if new tools were registered
+            if (toolsRegisteredCount > 0) {
+                console.error(`[Discovery] Notifying client: tools list changed (${toolsRegisteredCount} new tools)`);
+                try {
+                    // Send tool list changed notification
+                    // @ts-ignore - access underlying server notification system
+                    const rawServer = (server as any).server;
+                    if (rawServer && typeof rawServer.notification === 'function') {
+                        rawServer.notification({ method: "notifications/tools/list_changed" });
+                    }
+                } catch (e) {
+                    console.error("[Discovery] Failed to send list_changed notification:", e);
+                }
             }
 
-            // 3. Execute the tool
-            return await tool.execute(validatedParams, executionContext);
-
-        } catch (error: any) {
-            // Return validation errors or execution errors as text responses so the LLM can see them
-            let errorMessage = error.message;
-
-            if (error instanceof z.ZodError) {
-                errorMessage = `Validation Error: ${JSON.stringify(error.flatten().fieldErrors, null, 2)}`;
+            let message = "";
+            if (successNames.length > 0) {
+                message += `Successfully initialized: ${successNames.join(', ')}. `;
+            }
+            if (failureNames.length > 0) {
+                message += `Failed to initialize: ${failureNames.join(', ')}.`;
             }
 
             return {
                 content: [{
                     type: "text",
-                    text: `Error executing '${toolName}': ${errorMessage}`
+                    text: message || "No tools were processed."
                 }]
             };
         }
-    }
-};
+    };
+
+    return { _initializeTools, _syncTools, unlockedTools };
+}
