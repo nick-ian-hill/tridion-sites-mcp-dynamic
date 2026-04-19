@@ -14,22 +14,10 @@ const isStdio = transportType === 'stdio';
  * messages through. Everything else is redirected to stderr.
  */
 if (isStdio) {
-    const originalStdoutWrite = process.stdout.write;
-    // @ts-ignore
-    process.stdout.write = (chunk, encoding, callback) => {
-        const str = chunk.toString();
-        try {
-            // If it's a valid JSON-RPC message, let it through to stdout
-            JSON.parse(str);
-            return originalStdoutWrite.apply(process.stdout, [chunk, encoding, callback]);
-        } catch (e) {
-            // Otherwise, redirect to stderr to prevent connection closure
-            return process.stderr.write(chunk, encoding, callback);
-        }
-    };
-
-    // Also redirect console as a secondary layer
+    // Redirect all standard logging to stderr to keep stdout clean for the MCP protocol.
+    // The MCP StdioServerTransport writes directly to process.stdout, so it is unaffected.
     console.log = (...args) => console.error(...args);
+    console.info = (...args) => console.error(...args);
     console.warn = (...args) => console.error(...args);
 }
 
@@ -133,8 +121,24 @@ async function startServer() {
 
             if (req.method === 'POST') {
                 let body = '';
-                req.on('data', chunk => { body += chunk.toString(); });
+                const MAX_PAYLOAD_SIZE = process.env.MAX_PAYLOAD_SIZE 
+                    ? parseInt(process.env.MAX_PAYLOAD_SIZE) 
+                    : 30 * 1024 * 1024; // 30MB default
+                let tooLarge = false;
+
+                req.on('data', chunk => { 
+                    if (tooLarge) return;
+                    body += chunk.toString(); 
+                    if (body.length > MAX_PAYLOAD_SIZE) {
+                        tooLarge = true;
+                        res.writeHead(413, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'Payload too large. Limit is ' + (MAX_PAYLOAD_SIZE / 1024 / 1024) + 'MB' }));
+                        req.destroy();
+                    }
+                });
+
                 req.on('end', async () => {
+                    if (tooLarge) return;
                     let parsed: any;
                     try {
                         parsed = JSON.parse(body);

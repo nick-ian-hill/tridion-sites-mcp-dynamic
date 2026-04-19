@@ -153,12 +153,8 @@ If a tool's description mentions using another tool, you must initialize that re
             if (toolsRegisteredCount > 0) {
                 console.error(`[Discovery] Notifying client: tools list changed (${toolsRegisteredCount} new tools)`);
                 try {
-                    // Send tool list changed notification
-                    // @ts-ignore - access underlying server notification system
-                    const rawServer = (server as any).server;
-                    if (rawServer && typeof rawServer.notification === 'function') {
-                        rawServer.notification({ method: "notifications/tools/list_changed" });
-                    }
+                    // Send tool list changed notification using the official SDK method
+                    server.sendToolListChanged();
                 } catch (e) {
                     console.error("[Discovery] Failed to send list_changed notification:", e);
                 }

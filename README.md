@@ -78,7 +78,10 @@ To get the MCP server running on your machine, follow these steps:
    AUTH_CLIENT_ID=<your-client-id>
    AUTH_CLIENT_SECRET=<your-client-secret>
    GEMINI_API_KEY=<your-gemini-api-key>
+   MAX_PAYLOAD_SIZE=31457280
    ```
+
+   > **Note on `MAX_PAYLOAD_SIZE`:** This variable defines the maximum body size (in bytes) for incoming POST requests to the Streamable HTTP server. The default is **30MB** (31,457,280 bytes). If you frequently work with very large multimedia files (e.g., high-resolution images or large PDFs) that exceed this limit when Base64 encoded, you should increase this value to prevent `413 Payload Too Large` errors.
 
    > **Note on `GEMINI_API_KEY`:** This key is only required if you intend to use the AI-powered tools (`autoClassifyItem`, `autoClassifyMultimediaComponent`, `generateContentFromPrompt`, `createMultimediaComponentFromPrompt`, `updateMultimediaComponentFromPrompt`). It is also required by `readMultimediaComponent` and `readUploadedFile` when reading **image** files (the vision model is used to analyse the image content; non-image formats such as Word, Excel, and PDF do not require the key). All other tools work without it. Obtain a key from [Google AI Studio](https://aistudio.google.com/).
 
