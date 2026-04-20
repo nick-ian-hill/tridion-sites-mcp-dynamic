@@ -86,7 +86,7 @@ export async function initializeToolRegistry(manualTools: Tool[] = []): Promise<
     }
 
     toolRegistry = loadedToolsMap;
-    console.error(`Successfully loaded ${toolRegistry.size} tools into the registry. These will be exposed via the dynamic meta-tool _initializeTools.`);
+    console.error(`Successfully loaded ${toolRegistry.size} tools into the registry. These will be exposed via the dynamic meta-tool _setTools.`);
     return toolRegistry;
 }
 

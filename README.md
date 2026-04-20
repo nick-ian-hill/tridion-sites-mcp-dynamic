@@ -6,12 +6,25 @@ This repository contains a Model Context Protocol (MCP) server designed to integ
 
 This server uses a **discovery-based architecture** to minimize token consumption and prevent agent hallucinations. Instead of exposing all 80+ tools in the initial system prompt, the server uses a **JIT Hydration** model:
 
-1.  **`_initializeTools`**: The primary meta-tool used to **hydrate and register** the required CMS tools into the host registry. Once initialized, the full tool documentation (including schemas and heuristics) becomes natively available for use. This tool performs an **exclusive refresh**: each call replaces the current hydrated set with a new one.
+1.  **`_setTools`**: The primary meta-tool used to **hydrate and register** the required CMS tools into the host registry. Once configured, the full tool documentation (including schemas and heuristics) becomes natively available for use. This tool performs an **exclusive refresh**: each call replaces the current hydrated set with a new one.
 2.  **Reconciliation Receipt**: Upon initialization, the server returns a "Reconciliation Receipt" that confirms the verified state of the registry and provides a task-continuation bridge.
-3.  **Turn-Based Synchronization**: To ensure the client has processed the background tool refresh, the AI **must** yield its turn immediately after initialization. The updated tools are then fully available in the subsequent turn.
+3.  **Protocol Synchronization**: To ensure the host has processed the tool refresh, the AI concludes its response after initialization. The updated tools are then fully available in the subsequent turn.
 4.  **Security Interlock**: For orchestrated scripts (`toolOrchestrator`), the server enforces a strict rule: a tool cannot be executed within a script unless it has been explicitly initialized in the current session.
 
 This approach is an independent implementation of the **MCP Compression** pattern, which ensures the system prompt stays efficient while providing the agent with the highest-fidelity documentation exactly when needed.
+
+### JIT Hydration Handshake
+The agent performs a "Discovery Handshake" before executing specialized tools:
+
+1.  **Select Tools**: AI selects required tools from the `AVAILABLE TOOLS` list in the `_setTools` description.
+2.  **Hydrate**: AI calls `_setTools(toolNames: ["getItem", "search"], resumeTask: "...")`.
+3.  **Sync**: AI calls `_setTools(resumeTask: "...")` without tool names to synchronize the registry.
+4.  **Execute**: AI proceeds to use `getItem` or `search` natively in the subsequent turn.
+
+### Why `_setTools`?
+-   **Security**: Agents cannot execute tools without explicitly requesting documentation for them first.
+-   **Context Efficiency**: The LLM context is not cluttered with 80+ tool definitions; it only holds those required for the current task.
+-   **Consistency**: Using `_setTools` natively keeps the LLM's world-view synchronized with the actual server capabilities.
 
 
 
@@ -129,8 +142,10 @@ To get the MCP server running on your machine, follow these steps:
 
 ```
 src/
-├── index.ts              # Server entry point. Registers the _initializeTools handler.
-│                         # Dynamically registers other tools (including Orchestrator) upon request.
+├── index.ts              # Server entry point. Registers the _setTools handler.
+├── mcp/
+│   └── metaTools.ts      # Core JIT hydration architecture. Defines the _setTools meta-tool and 
+│                         # manages session-isolated state for dynamic tool registration.
 ├── tools/                # One file per MCP tool. Each file exports a single object with a name,
 │                         # description, Zod input schema, and an execute function.
 ├── schemas/              # Reusable Zod schemas shared across multiple tools (e.g. search query

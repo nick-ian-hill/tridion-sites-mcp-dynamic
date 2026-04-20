@@ -10,32 +10,32 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
  */
 export function initializeSessionTools(server: McpServer) {
     // State isolated to this session's closure
-    const unlockedTools = new Set<string>(['_initializeTools']);
-    const registeredOnServer = new Set<string>(['_initializeTools']);
+    const unlockedTools = new Set<string>(['_setTools']);
+    const registeredOnServer = new Set<string>(['_setTools']);
     const activeRegistrations = new Map<string, any>();
 
 
 
     /**
-     * The _initializeTools meta-tool is used to hydrate and register 
-     * required tools into the host registry. The AI selects tools from 
-     * the 'AVAILABLE TOOLS' summary to initialize them for use.
+     * The _setTools meta-tool is used to hydrate and configure 
+     * required tools in the host registry. The AI selects tools from 
+     * the 'AVAILABLE TOOLS' summary to set/refresh its toolset.
      */
-    const _initializeTools = {
-        name: "_initializeTools",
+    const _setTools = {
+        name: "_setTools",
         summary: "Initializes CMS tools for active use.",
         examples: [],
         get description() {
             const summaryString = getToolsSummary();
             return `
 ## USAGE PROTOCOL
-1.  Select tools from the 'AVAILABLE TOOLS' menu below. Only initialize the set of tools required for your immediate needs (i.e., tool execution or documentation lookup). Hydrating tools that are not required can increase latency and token costs.
-2.  Call this tool to hydrate them into your native registry.
-3.  **Mandatory Yield**: After calling this tool, you **MUST** state your execution plan and then STOP your response to yield the turn. This allows the client (e.g. Gemini CLI) to process the tool refresh before you attempt to use those tools in the next turn.
+1.  **Selection**: Select tools from the 'AVAILABLE TOOLS' menu below. Only initialize the set of tools required for your immediate needs (i.e., tool execution or documentation lookup). If a tool's description mentions using another tool, you must include that referenced tool in your selection. Hydrating tools that are not required can increase latency and token costs.
+2.  **Registration**: Call this tool with your selected \`toolNames\` and provide a specific \`resumeTask\` string summarizing the user's original request.
+3.  **Protocol Synchronization**: Immediately after the registration call completes, you **MUST** call this tool a second time. In this second call, you must omit the \`toolNames\` parameter, but you **MUST provide the exact same \`resumeTask\` string** used in Step 2. This synchronization call is a technical necessity to force a turn boundary in the host client, ensuring it has refreshed its tool handles before you proceed with execution.
 
-Note: This tool performs an **exclusive refresh** of the registry. Any tools initialized in a previous turn that are not included in the current 'toolNames' list will be removed from your active toolset.
-
-Note: Tools must be initialized here before they can be used natively or within the \`toolOrchestrator\`.
+### Notes
+*   This tool performs an **exclusive refresh** of the registry. Any tools initialized in a previous turn that are not included in the current \`toolNames\` list will be removed from your active toolset.
+*   Tools must be configured here before they can be used natively or within the \`toolOrchestrator\`.
 
 ## CRITICAL CMS ARCHITECTURE & OPERATIONAL HEURISTICS
 
@@ -71,20 +71,33 @@ You are an expert collaborator for the Tridion Sites Content Management System. 
 * **Short-Circuiting:** * If a request is vague (e.g., "update the article"), do **NOT** guess; ask for specific IDs.
     * If a request is out-of-domain (e.g., "Mango the orange..."), do **NOT** call CMS tools. Respond politely and pivot back to the CMS.
 * **Native Over Custom:** Always prioritize solving requirements through native parameters and schema-level properties (e.g., field flags, mandatory settings) as the primary solution before proposing custom extensions, C# scripts, or event handlers.
-* **Scripting API Integrity:** When using \`toolOrchestrator\`, the \`context.tools\` object exposes ONLY the tools listed in this documentation. You **MUST** call \`_initializeTools\` natively for any tool you intend to use in a script to verify its exact name and parameter schema.
+* **Scripting API Integrity:** When using \`toolOrchestrator\`, the \`context.tools\` object exposes ONLY the tools listed in this documentation. You **MUST** call \`_setTools\` natively for any tool you intend to use in a script to verify its exact name and parameter schema.
 
 The list of "AVAILABLE TOOLS" below contains concise "SEO hooks" (summaries) for each tool. Use these hooks to identify which tool possesses the knowledge needed to answer a user's question.
 
 AVAILABLE TOOLS:
 ${summaryString}
-
-If a tool's description mentions using another tool, you must initialize that referenced tool before use.`;
+`;
         },
         input: {
-            toolNames: z.array(z.string()).describe("An array of exact tool names to retrieve documentation for and register for use."),
-            resumeTask: z.string().optional().describe("A brief summary of the original user request. This will be echoed back in the response to ensure continuity after the registry refresh.")
+            toolNames: z.array(z.string()).optional().describe("An array of exact tool names to register. If omitted, the tool performs a synchronization confirmation without modifying the registry."),
+            resumeTask: z.string().optional().describe("A brief summary of the original user request. This will be echoed back in the response to maintain continuity.")
         },
-        execute: async ({ toolNames, resumeTask }: { toolNames: string[], resumeTask?: string }) => {
+        execute: async ({ toolNames, resumeTask }: { toolNames?: string[], resumeTask?: string }) => {
+            // --- Sync-Bridge Mode ---
+            // If toolNames is omitted, we skip the refresh logic and just force a turn boundary.
+            if (!toolNames) {
+                console.error(`[Discovery] Sync-only call received. Skipping refresh.`);
+                return {
+                    content: [{
+                        type: "text",
+                        text: `SYNC SUCCESS: Your native registry is now synchronized.
+                        
+RESUME TASK: ${resumeTask || "Proceed with the requested operation."}`
+                    }]
+                };
+            }
+
             // --- Reset Logic: Exclusive Refresh ---
             // Remove any previously hydrated tools to keep the registry lean and predictable.
             for (const [name, registeredTool] of activeRegistrations.entries()) {
@@ -99,9 +112,9 @@ If a tool's description mentions using another tool, you must initialize that re
             unlockedTools.clear();
             registeredOnServer.clear();
 
-            // Re-unlock _initializeTools
-            unlockedTools.add('_initializeTools');
-            registeredOnServer.add('_initializeTools');
+            // Re-unlock _setTools
+            unlockedTools.add('_setTools');
+            registeredOnServer.add('_setTools');
 
             const registry = getToolRegistry();
             let toolsRegisteredCount = 0;
@@ -169,10 +182,9 @@ VERIFIED STATE: Your native registry is now refreshed. You have full access to t
 
 RESUME TASK: ${resumeTask || "Proceed with the requested operation."}
 
-MANDATORY NEXT STEP:
-1. State your execution plan using the new tools.
-2. STOP your response immediately (Yield Turn).
-3. Execute the tools in the next turn once the Host registry has synced.`;
+NEXT STEPS:
+1. State your plan and then call \`_setTools\` (without arguments) to synchronize.
+2. Proceed with tool execution in your next turn once synchronized. (Hydrated tools cannot be called in the same response as initialization).`;
 
             return {
                 content: [{
@@ -183,5 +195,5 @@ MANDATORY NEXT STEP:
         }
     };
 
-    return { _initializeTools, unlockedTools };
+    return { _setTools, unlockedTools };
 }
