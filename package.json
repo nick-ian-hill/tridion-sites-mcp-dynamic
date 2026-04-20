@@ -8,6 +8,7 @@
     "start": "tsx src/index.ts",
     "start:http": "tsx src/index.ts --http",
     "start:stdio": "tsx src/index.ts --stdio",
+    "start:mock": "CORE_API_URL=http://localhost:8081/api/v3.0 AUTH_TOKEN_URL=http://localhost:8081/access-management/connect/token AUTH_CLIENT_ID=mock AUTH_CLIENT_SECRET=mock tsx src/index.ts --http",
     "orchestrator": "tsx src/runOrchestratorTest.ts"
   },
   "keywords": [],

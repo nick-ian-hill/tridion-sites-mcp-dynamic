@@ -270,6 +270,16 @@ node tridion-mock-server.js 8081
 
 Once started, the mock server provides a simulated CM REST API and Access Management endpoint at `http://localhost:8081`.
 
+### Starting the MCP Server with Mock Data
+
+You can quickly start the MCP server in HTTP mode, pre-configured to point to the local mock instance, by running:
+
+```bash
+npm run start:mock
+```
+
+This script automatically sets the `CORE_API_URL` and `AUTH_TOKEN_URL` to target the mock server without requiring manual environment variable configuration.
+
 ### Mock Server Configuration
 
 To point your MCP server at the mock instance, use the following environment variable configuration in your `mcp.json` or `.env` file:
