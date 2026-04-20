@@ -10,35 +10,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
  */
 export function initializeSessionTools(server: McpServer) {
     // State isolated to this session's closure
-    const unlockedTools = new Set<string>(['_initializeTools', '_syncTools']);
-    const registeredOnServer = new Set<string>(['_initializeTools', '_syncTools']);
+    const unlockedTools = new Set<string>(['_initializeTools']);
+    const registeredOnServer = new Set<string>(['_initializeTools']);
+    const activeRegistrations = new Map<string, any>();
+
+
 
     /**
-     * The _syncTools tool acts as a synchronization barrier (a "yield").
-     * Its primary purpose is to force a network round-trip so that the client 
-     * (like Gemini CLI) has a wall-clock 'tick' to process the notifications 
-     * queue and hydrate the registry before the next substantive tool call.
-     */
-    const _syncTools = {
-        name: "_syncTools",
-        summary: "Yields execution to the client for state synchronization.",
-        examples: [],
-        description: "This is a synchronization tool. When called, it returns a success message. Its primary purpose is to create a network round-trip ('tick') that allows the client (e.g., Gemini CLI) to process background notifications, such as tool list updates from JIT hydration, before the next real step is taken.",
-        input: {},
-        execute: async () => {
-            return {
-                content: [{
-                    type: "text",
-                    text: "Sync tick completed. You may now proceed with using the newly hydrated tools."
-                }]
-            };
-        }
-    };
-
-    /**
-     * The _initializeTools meta-tool replaces getToolDetails.
-     * It allows the AI assistant to browse lightweight summaries and "fetch"
-     * full documentation, while simultaneously registering the tools as native MCP tools.
+     * The _initializeTools meta-tool is used to hydrate and register 
+     * required tools into the host registry. The AI selects tools from 
+     * the 'AVAILABLE TOOLS' summary to initialize them for use.
      */
     const _initializeTools = {
         name: "_initializeTools",
@@ -48,9 +29,11 @@ export function initializeSessionTools(server: McpServer) {
             const summaryString = getToolsSummary();
             return `
 ## USAGE PROTOCOL
-1.  Select tools from the 'AVAILABLE TOOLS' menu below.
+1.  Select tools from the 'AVAILABLE TOOLS' menu below. Only initialize the set of tools required for your immediate needs (i.e., tool execution or documentation lookup). Hydrating tools that are not required can increase latency and token costs.
 2.  Call this tool to hydrate them into your native registry.
-3.  **Mandatory Synchronization**: Immediately after calling this tool, you **MUST** call the \`_syncTools\` tool as your very next action. This ensures the client (e.g. Gemini CLI) has time to process the tool refresh before you attempt to use those tools natively or in a subagent.
+3.  **Mandatory Yield**: After calling this tool, you **MUST** state your execution plan and then STOP your response to yield the turn. This allows the client (e.g. Gemini CLI) to process the tool refresh before you attempt to use those tools in the next turn.
+
+Note: This tool performs an **exclusive refresh** of the registry. Any tools initialized in a previous turn that are not included in the current 'toolNames' list will be removed from your active toolset.
 
 Note: Tools must be initialized here before they can be used natively or within the \`toolOrchestrator\`.
 
@@ -98,9 +81,28 @@ ${summaryString}
 If a tool's description mentions using another tool, you must initialize that referenced tool before use.`;
         },
         input: {
-            toolNames: z.array(z.string()).describe("An array of exact tool names to retrieve documentation for and register for use.")
+            toolNames: z.array(z.string()).describe("An array of exact tool names to retrieve documentation for and register for use."),
+            resumeTask: z.string().optional().describe("A brief summary of the original user request. This will be echoed back in the response to ensure continuity after the registry refresh.")
         },
-        execute: async ({ toolNames }: { toolNames: string[] }) => {
+        execute: async ({ toolNames, resumeTask }: { toolNames: string[], resumeTask?: string }) => {
+            // --- Reset Logic: Exclusive Refresh ---
+            // Remove any previously hydrated tools to keep the registry lean and predictable.
+            for (const [name, registeredTool] of activeRegistrations.entries()) {
+                try {
+                    console.error(`[Discovery] Purging tool '${name}' to prepare for exclusive refresh.`);
+                    registeredTool.remove();
+                } catch (e) {
+                    console.error(`[Discovery] Warning: Failed to remove tool '${name}':`, e);
+                }
+            }
+            activeRegistrations.clear();
+            unlockedTools.clear();
+            registeredOnServer.clear();
+
+            // Re-unlock _initializeTools
+            unlockedTools.add('_initializeTools');
+            registeredOnServer.add('_initializeTools');
+
             const registry = getToolRegistry();
             let toolsRegisteredCount = 0;
             const successNames: string[] = [];
@@ -124,7 +126,7 @@ If a tool's description mentions using another tool, you must initialize that re
                             fullDescription += `\n\n### Examples\n${JSON.stringify(tool.examples, null, 2)}`;
                         }
 
-                        server.registerTool(
+                        const registeredTool = server.registerTool(
                             tool.name,
                             {
                                 description: fullDescription,
@@ -136,6 +138,7 @@ If a tool's description mentions using another tool, you must initialize that re
                         );
 
                         registeredOnServer.add(tool.name);
+                        activeRegistrations.set(tool.name, registeredTool);
                         toolsRegisteredCount++;
                     } catch (error) {
                         console.error(`[Discovery] Failed to register tool ${tool.name}:`, error);
@@ -160,22 +163,25 @@ If a tool's description mentions using another tool, you must initialize that re
                 }
             }
 
-            let message = "";
-            if (successNames.length > 0) {
-                message += `Successfully initialized: ${successNames.join(', ')}. `;
-            }
-            if (failureNames.length > 0) {
-                message += `Failed to initialize: ${failureNames.join(', ')}.`;
-            }
+            const receipt = `SUCCESS: The following tools were verified and registered natively: [${successNames.join(', ')}].
+
+VERIFIED STATE: Your native registry is now refreshed. You have full access to the Zod schemas and BluePrint heuristics for these tools.
+
+RESUME TASK: ${resumeTask || "Proceed with the requested operation."}
+
+MANDATORY NEXT STEP:
+1. State your execution plan using the new tools.
+2. STOP your response immediately (Yield Turn).
+3. Execute the tools in the next turn once the Host registry has synced.`;
 
             return {
                 content: [{
                     type: "text",
-                    text: message || "No tools were processed."
+                    text: receipt
                 }]
             };
         }
     };
 
-    return { _initializeTools, _syncTools, unlockedTools };
+    return { _initializeTools, unlockedTools };
 }

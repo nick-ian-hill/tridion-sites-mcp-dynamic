@@ -6,10 +6,10 @@ This repository contains a Model Context Protocol (MCP) server designed to integ
 
 This server uses a **discovery-based architecture** to minimize token consumption and prevent agent hallucinations. Instead of exposing all 80+ tools in the initial system prompt, the server uses a **JIT Hydration** model:
 
-1.  **`_initializeTools`**: The primary meta-tool exposed at startup. The AI assistant uses this to browse tool summaries and "fetch" full documentation (schemas, heuristics, and examples) for specific tools.
-2.  **`_syncTools`**: A synchronization barrier used immediately after initialization. It forces a network round-trip to ensure the client has processed the tool list change notification before the AI attempts to use the new tools (refer to [Gemini CLI Issue #25650](https://github.com/google-gemini/gemini-cli/issues/25650) for technical context).
-3.  **Client Hot-Reloading**: The server dispatches a `notifications/tools/list_changed` signal during initialization. The `_syncTools` tool ensures the client finishes this background refresh before the next substantive step.
-4.  **Security Interlock**: For orchestrated scripts (`toolOrchestrator`), the server enforces a strict rule: a tool cannot be executed within a script unless it has been explicitly initialized and documented in the same session.
+1.  **`_initializeTools`**: The primary meta-tool used to **hydrate and register** the required CMS tools into the host registry. Once initialized, the full tool documentation (including schemas and heuristics) becomes natively available for use. This tool performs an **exclusive refresh**: each call replaces the current hydrated set with a new one.
+2.  **Reconciliation Receipt**: Upon initialization, the server returns a "Reconciliation Receipt" that confirms the verified state of the registry and provides a task-continuation bridge.
+3.  **Turn-Based Synchronization**: To ensure the client has processed the background tool refresh, the AI **must** yield its turn immediately after initialization. The updated tools are then fully available in the subsequent turn.
+4.  **Security Interlock**: For orchestrated scripts (`toolOrchestrator`), the server enforces a strict rule: a tool cannot be executed within a script unless it has been explicitly initialized in the current session.
 
 This approach is an independent implementation of the **MCP Compression** pattern, which ensures the system prompt stays efficient while providing the agent with the highest-fidelity documentation exactly when needed.
 

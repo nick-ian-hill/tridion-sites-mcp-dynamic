@@ -49,11 +49,11 @@ function createMcpServer(): McpServer {
     });
 
     // 1. Initialize session-specific meta-tools and state
-    const { _initializeTools, _syncTools, unlockedTools } = initializeSessionTools(server);
+    const { _initializeTools, unlockedTools } = initializeSessionTools(server);
 
-    // 2. Initial toolset: Only _initializeTools and _syncTools are registered by default.
+    // 2. Initial toolset: Only _initializeTools is registered by default.
     // All other tools (including toolOrchestrator) must be hydrated via _initializeTools.
-    const mcpTools = [_initializeTools as Tool, _syncTools as Tool];
+    const mcpTools = [_initializeTools as Tool];
 
     for (const tool of mcpTools) {
         let fullDescription = `${tool.summary}\n\n${tool.description}`;
