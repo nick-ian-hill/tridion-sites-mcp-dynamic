@@ -26,6 +26,9 @@ The agent performs a "Discovery Handshake" before executing specialized tools:
 -   **Context Efficiency**: The LLM context is not cluttered with 80+ tool definitions; it only holds those required for the current task.
 -   **Consistency**: Using `_setTools` natively keeps the LLM's world-view synchronized with the actual server capabilities.
 
+> [!IMPORTANT]
+> **Google Antigravity Compatibility**: While VS Code (GitHub Copilot) and Gemini CLI support real-time tool list refreshes via `notifications/tools/list_changed`, **Google Antigravity** does not currently support dynamic discovery. In Antigravity, tools initialized via `_setTools` will be active in the server's internal registry but do not appear in the IDE.
+
 
 
 ## Capabilities
