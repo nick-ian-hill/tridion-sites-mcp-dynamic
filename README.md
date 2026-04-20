@@ -168,7 +168,7 @@ VS Code uses an `mcp.json` file (either globally in your user profile or locally
 #### Stdio Mode (Process)
 ```json
 {
-  "mcpServers": {
+  "servers": {
     "tridion": {
       "command": "npx",
       "args": ["tsx", "/absolute/path/to/src/index.ts"],
@@ -187,7 +187,7 @@ VS Code uses an `mcp.json` file (either globally in your user profile or locally
 Ensure the server is running locally first (`npm start`).
 ```json
 {
-  "mcpServers": {
+  "servers": {
     "tridion": {
       "url": "http://localhost:8090"
     }
