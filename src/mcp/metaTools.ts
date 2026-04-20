@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
-import { getToolRegistry, getToolsSummary, Tool } from "../utils/toolRegistry.js";
+import { getToolRegistry, getToolsSummary } from "../utils/toolRegistry.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 /**

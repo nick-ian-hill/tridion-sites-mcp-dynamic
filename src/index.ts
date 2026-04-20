@@ -30,7 +30,6 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import { initializeToolRegistry, Tool } from './utils/toolRegistry.js';
 import { initializeSessionTools } from './mcp/metaTools.js';
-import { toolOrchestrator } from './tools/toolOrchestrator.js';
 
 /**
  * Creates and configures an McpServer instance with registered meta-tools.
@@ -57,7 +56,7 @@ function createMcpServer(): McpServer {
 
     for (const tool of mcpTools) {
         let fullDescription = `${tool.summary}\n\n${tool.description}`;
-        
+
         // Append examples if they exist (standard for the JIT registration pattern)
         if (tool.examples && tool.examples.length > 0) {
             fullDescription += `\n\n### Examples\n${JSON.stringify(tool.examples, null, 2)}`;
@@ -121,14 +120,14 @@ async function startServer() {
 
             if (req.method === 'POST') {
                 let body = '';
-                const MAX_PAYLOAD_SIZE = process.env.MAX_PAYLOAD_SIZE 
-                    ? parseInt(process.env.MAX_PAYLOAD_SIZE) 
+                const MAX_PAYLOAD_SIZE = process.env.MAX_PAYLOAD_SIZE
+                    ? parseInt(process.env.MAX_PAYLOAD_SIZE)
                     : 30 * 1024 * 1024; // 30MB default
                 let tooLarge = false;
 
-                req.on('data', chunk => { 
+                req.on('data', chunk => {
                     if (tooLarge) return;
-                    body += chunk.toString(); 
+                    body += chunk.toString();
                     if (body.length > MAX_PAYLOAD_SIZE) {
                         tooLarge = true;
                         res.writeHead(413, { 'Content-Type': 'application/json' });
