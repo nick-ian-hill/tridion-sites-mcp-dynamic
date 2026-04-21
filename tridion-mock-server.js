@@ -44,7 +44,9 @@ const ITEM_TYPE = {
     TemplateBuildingBlock: 2048,
     Category: 512,
     Keyword: 1024,
-    Bundle: 131072,
+    Bundle: 8192,
+    ProcessInstance: 131072,
+    ProcessDefinition: 131074,
 };
 
 const ITEM_TYPE_NAME = Object.fromEntries(Object.entries(ITEM_TYPE).map(([k, v]) => [v, k]));
@@ -55,24 +57,27 @@ const ITEM_TYPE_NAME = Object.fromEntries(Object.entries(ITEM_TYPE).map(([k, v])
 
 const publications = [
     {
-        Id: 'tcm:0-1-1', Title: '010 System Master', type: 'Publication',
+        Id: 'tcm:0-1-1', Title: '010 System Master', type: 'Publication', '$type': 'Publication',
+        PublicationUrl: '/', PublicationPath: 'C:\\tridion\\pub1',
         RootFolder: { '$type': 'Link', IdRef: 'tcm:1-2-2', Title: 'Root Folder' },
         RootStructureGroup: { '$type': 'Link', IdRef: 'tcm:1-4-4', Title: 'Root SG' },
-        BluePrintInfo: { IsShared: false, IsLocalized: false, OwningRepository: { IdRef: 'tcm:0-1-1' } }
+        BluePrintInfo: { '$type': 'BlueprintInfo', IsShared: false, IsLocalized: false, OwningRepository: { '$type': 'Link', IdRef: 'tcm:0-1-1' } }
     },
     {
-        Id: 'tcm:0-5-1', Title: '050 Content Master', type: 'Publication',
+        Id: 'tcm:0-5-1', Title: '050 Content Master', type: 'Publication', '$type': 'Publication',
+        PublicationUrl: '/content', PublicationPath: 'C:\\tridion\\pub5',
         Parents: [{ '$type': 'Link', IdRef: 'tcm:0-1-1', Title: '010 System Master' }],
         RootFolder: { '$type': 'Link', IdRef: 'tcm:5-2-2', Title: 'Root Folder' },
         RootStructureGroup: { '$type': 'Link', IdRef: 'tcm:5-4-4', Title: 'Root SG' },
-        BluePrintInfo: { IsShared: false, IsLocalized: false, OwningRepository: { IdRef: 'tcm:0-5-1' } }
+        BluePrintInfo: { '$type': 'BlueprintInfo', IsShared: false, IsLocalized: false, OwningRepository: { '$type': 'Link', IdRef: 'tcm:0-5-1' } }
     },
     {
-        Id: 'tcm:0-10-1', Title: '100 Website EN', type: 'Publication',
+        Id: 'tcm:0-10-1', Title: '100 Website EN', type: 'Publication', '$type': 'Publication',
+        PublicationUrl: '/en', PublicationPath: 'C:\\tridion\\pub10',
         Parents: [{ '$type': 'Link', IdRef: 'tcm:0-5-1', Title: '050 Content Master' }],
         RootFolder: { '$type': 'Link', IdRef: 'tcm:10-2-2', Title: 'Root Folder' },
         RootStructureGroup: { '$type': 'Link', IdRef: 'tcm:10-4-4', Title: 'Root SG' },
-        BluePrintInfo: { IsShared: false, IsLocalized: false, OwningRepository: { IdRef: 'tcm:0-10-1' } }
+        BluePrintInfo: { '$type': 'BlueprintInfo', IsShared: false, IsLocalized: false, OwningRepository: { '$type': 'Link', IdRef: 'tcm:0-10-1' } }
     },
 ];
 
@@ -159,35 +164,64 @@ const hydrateSchemaFields = (schema) => {
     if (schema.MetadataFields) hydrateFields(schema.MetadataFields);
 };
 
-const createBaseItem = (id, typeNum, title, pubId, extra = {}) => ({
-    '$type': ITEM_TYPE_NAME[typeNum] || 'Item',  // Real API uses $type for polymorphism
-    Id: `tcm:${pubId}-${id}-${typeNum}`,
-    Title: title,
-    type: ITEM_TYPE_NAME[typeNum] || 'Item',      // Kept for backward-compat with tool response parsing
-    ItemType: typeNum,
-    BluePrintInfo: {
-        OwningRepository: { '$type': 'Link', IdRef: `tcm:0-${pubId}-1`, Title: publications.find(p => p.Id === `tcm:0-${pubId}-1`)?.Title || `Pub ${pubId}` },
-        IsShared: false,
-        IsLocalized: false,
-        PrimaryBluePrintParentItem: { '$type': 'Link', IdRef: `tcm:0-${pubId}-1` }
-    },
-    VersionInfo: {
-        Version: 1,
-        Revision: 0,
-        CreationDate: now(),
-        RevisionDate: now()
-    },
-    LocationInfo: {
-        ContextRepository: { '$type': 'Link', IdRef: `tcm:0-${pubId}-1`, Title: publications.find(p => p.Id === `tcm:0-${pubId}-1`)?.Title || `Pub ${pubId}` },
-        // OrganizationalItem is populated via extra for items that live in a Folder/SG.
-        // For root-level items it remains absent, matching real API behaviour.
-    },
-    LockInfo: {
-        LockType: 'None',
-        LockUser: null
-    },
-    ...extra,
-});
+const createBaseItem = (id, typeNum, title, pubId, extra = {}) => {
+    const itemType = ITEM_TYPE_NAME[typeNum] || 'Item';
+    const base = {
+        '$type': itemType,
+        Id: `tcm:${pubId}-${id}-${typeNum}`,
+        Title: title,
+        type: itemType,
+        ItemType: typeNum,
+        BluePrintInfo: {
+            '$type': 'BlueprintInfo',
+            OwningRepository: { '$type': 'Link', IdRef: `tcm:0-${pubId}-1`, Title: publications.find(p => p.Id === `tcm:0-${pubId}-1`)?.Title || `Pub ${pubId}` },
+            IsShared: false,
+            IsLocalized: false,
+            PrimaryBluePrintParentItem: { '$type': 'Link', IdRef: `tcm:0-${pubId}-1` }
+        },
+        VersionInfo: {
+            '$type': 'LimitedVersionInfo',
+            Version: 1,
+            Revision: 0,
+            CreationDate: now(),
+            RevisionDate: now()
+        },
+        LocationInfo: {
+            '$type': 'LocationInfo',
+            ContextRepository: { '$type': 'Link', IdRef: `tcm:0-${pubId}-1`, Title: publications.find(p => p.Id === `tcm:0-${pubId}-1`)?.Title || `Pub ${pubId}` },
+        },
+        LockInfo: {
+            '$type': 'LockInfo',
+            LockType: 'None',
+            LockUser: null
+        },
+        ...extra,
+    };
+
+    // Schema-specific logic
+    if (typeNum === 8) {
+        if (!base.Purpose) base.Purpose = 'Component';
+        if (base.Purpose === 'Region' && !base.RegionDefinition) {
+            base.RegionDefinition = {
+                '$type': 'RegionDefinition',
+                ComponentPresentationConstraints: [],
+                DefaultComponentPresentations: [],
+                IsLocalizable: true,
+                NestedRegions: []
+            };
+        }
+    }
+
+    // Bundle-specific logic
+    if (typeNum === 8192) {
+        if (!base.Items) base.Items = [];
+        if (!base.TypeSchema) {
+            base.TypeSchema = { '$type': 'Link', IdRef: 'tcm:0-2-8', Title: 'Bundle' };
+        }
+    }
+
+    return base;
+};
 
 const dbPut = (itemId, typeNum, owningPub, localizationsObj) => {
     db.set(`${itemId}-${typeNum}`, { owningPub, localizations: localizationsObj });
@@ -211,7 +245,7 @@ const initDb = () => {
     // 3. Embedded Schema: Address
     dbPut(102, 8, '5', {
         '5': createBaseItem(102, 8, 'Address', '5', {
-            SchemaPurpose: 'Embedded',
+            Purpose: 'Embedded',
             RootElementName: 'Address',
             Fields: {
                 '$type': 'FieldsDefinitionDictionary',
@@ -243,7 +277,7 @@ const initDb = () => {
     // 6. Article Schema (Enhanced with Embedded and Diverse Types)
     dbPut(100, 8, '5', {
         '5': createBaseItem(100, 8, 'Article', '5', {
-            SchemaPurpose: 'Component',
+            Purpose: 'Component',
             RootElementName: 'Article',
             Fields: {
                 '$type': 'FieldsDefinitionDictionary',
@@ -295,6 +329,48 @@ const initDb = () => {
         })
     });
 
+    // 6a. Region Schema
+    dbPut(900, 8, '5', {
+        '5': createBaseItem(900, 8, 'Main Page Region', '5', {
+            Purpose: 'Region',
+            RegionDefinition: {
+                '$type': 'RegionDefinition',
+                ComponentPresentationConstraints: [
+                    {
+                        '$type': 'OccurrenceConstraint',
+                        MaxOccurs: 5,
+                        MinOccurs: 0
+                    }
+                ],
+                DefaultComponentPresentations: [],
+                IsLocalizable: true,
+                NestedRegions: []
+            }
+        })
+    });
+
+    // 6b. Bundle Schema
+    dbPut(901, 8, '5', {
+        '5': createBaseItem(901, 8, 'Campaign Bundle Schema', '5', {
+            Purpose: 'Bundle',
+            MetadataFields: {
+                '$type': 'FieldsDefinitionDictionary',
+                'CampaignID': { '$type': 'SingleLineTextFieldDefinition', Name: 'CampaignID', MinOccurs: 1, MaxOccurs: 1, IsLocalizable: true, IsPublishable: true, IsIndexable: true }
+            }
+        })
+    });
+
+    // 6c. Bundle
+    dbPut(902, 8192, '5', {
+        '5': createBaseItem(902, 8192, 'Q2 Launch Bundle', '5', {
+            TypeSchema: { '$type': 'Link', IdRef: 'tcm:5-901-8', Title: 'Campaign Bundle Schema' },
+            Items: [
+                { '$type': 'Link', IdRef: 'tcm:5-123-16', Title: 'About Us' },
+                { '$type': 'Link', IdRef: 'tcm:10-456-64', Title: 'Home Page' }
+            ]
+        })
+    });
+
     // 9. Page Template (Enhanced with Region Schema simulation)
     dbPut(99, 128, '5', {
         '5': createBaseItem(99, 128, 'Standard Page', '5', {
@@ -316,6 +392,7 @@ const initDb = () => {
         '5': createBaseItem(500, 16, 'Hero Banner', '5', {
             Schema: { '$type': 'Link', IdRef: 'tcm:5-103-8', Title: 'Image Asset' },
             LocationInfo: {
+                '$type': 'LocationInfo',
                 ContextRepository: { '$type': 'Link', IdRef: 'tcm:0-5-1' },
                 OrganizationalItem: { '$type': 'Link', IdRef: 'tcm:5-10-2' },
             },
@@ -335,6 +412,7 @@ const initDb = () => {
         '5': createBaseItem(123, 16, 'About Us', '5', {
             Schema: { '$type': 'Link', IdRef: 'tcm:5-100-8', Title: 'Article' },
             LocationInfo: {
+                '$type': 'LocationInfo',
                 ContextRepository: { '$type': 'Link', IdRef: 'tcm:0-5-1', Title: '050 Content Master' },
                 OrganizationalItem: { '$type': 'Link', IdRef: 'tcm:5-10-2', Title: 'Building Blocks' },
             },
@@ -357,6 +435,7 @@ const initDb = () => {
         '5': createBaseItem(124, 16, 'News Item', '5', {
             Schema: { '$type': 'Link', IdRef: 'tcm:5-100-8', Title: 'Article' },
             LocationInfo: {
+                '$type': 'LocationInfo',
                 ContextRepository: { '$type': 'Link', IdRef: 'tcm:0-5-1', Title: '050 Content Master' },
                 OrganizationalItem: { '$type': 'Link', IdRef: 'tcm:5-10-2', Title: 'Building Blocks' },
             },
@@ -374,6 +453,7 @@ const initDb = () => {
         '10': createBaseItem(456, 64, 'Home Page', '10', {
             FileName: 'index.html',
             LocationInfo: {
+                '$type': 'LocationInfo',
                 ContextRepository: { '$type': 'Link', IdRef: 'tcm:0-10-1', Title: '100 Website EN' },
                 OrganizationalItem: { '$type': 'Link', IdRef: 'tcm:10-20-4', Title: 'Home' },
             },
@@ -849,7 +929,7 @@ const router = async (req, res) => {
 
             const typeMap = {
                 Folder: 2, StructureGroup: 4, Category: 512, Keyword: 1024,
-                Bundle: 131072, Schema: 8,
+                Bundle: 8192, Schema: 8,
             };
             const itemTypeStr = input['$type']?.replace(/Request$/, '') || input.itemType || 'Folder';
             const typeNum = typeMap[itemTypeStr] || 2;
@@ -927,7 +1007,7 @@ const router = async (req, res) => {
                     if (typeNum !== '8') continue; // Schemas only
                     const item = resolveItem(contextPubId, id, typeNum);
                     if (!item) continue;
-                    if (purposes.length > 0 && item.SchemaPurpose && !purposes.includes(item.SchemaPurpose)) continue;
+                    if (purposes.length > 0 && item.Purpose && !purposes.includes(item.Purpose)) continue;
                     links.push({ IdRef: item.Id, Title: item.Title });
                 }
                 return handleResponse(res, 200, links);
